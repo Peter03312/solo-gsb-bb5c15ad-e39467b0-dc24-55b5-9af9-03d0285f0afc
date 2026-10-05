@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>字幕协校</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+         background: #f5f6f8; color: #222; }
+  header { background: #2c3e50; color: #fff; padding: 12px 24px; display: flex; align-items: baseline; gap: 16px; }
+  header h1 { font-size: 18px; margin: 0; }
+  header .tip { font-size: 12px; opacity: .75; }
+  main { max-width: 1100px; margin: 20px auto; padding: 0 16px; }
+  section { background: #fff; border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  h3 { font-size: 14px; margin: 18px 0 8px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border-bottom: 1px solid #eee; padding: 6px 8px; text-align: left; vertical-align: top; font-size: 13px; }
+  th { color: #666; font-weight: 600; }
+  input[type=text], textarea { width: 100%; padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px;
+         font-size: 13px; font-family: inherit; }
+  input.t-start, input.t-end { font-family: ui-monospace, Consolas, monospace; width: 110px; }
+  textarea { resize: vertical; }
+  button, .btn { display: inline-block; padding: 5px 12px; border: 1px solid #bbb; border-radius: 4px;
+         background: #fff; cursor: pointer; font-size: 13px; text-decoration: none; color: #222; }
+  button:hover, .btn:hover { background: #f0f0f0; }
+  button.primary { background: #2c7be5; border-color: #2c7be5; color: #fff; }
+  button.primary:hover { background: #1a68d1; }
+  button.danger { color: #c0392b; }
+  .badge { display: inline-block; background: #e8f0fe; color: #1a56c4; border-radius: 10px;
+           padding: 2px 10px; font-size: 12px; }
+  .error { color: #c0392b; white-space: pre-wrap; font-size: 13px; margin-top: 8px; }
+  .ok { color: #1e8e3e; font-size: 13px; margin-top: 8px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .grow { flex: 1; }
+  .mono { font-family: ui-monospace, Consolas, monospace; }
+  .pre { white-space: pre-wrap; }
+  #conflict-panel { border: 1px solid #e0a800; background: #fff8e1; border-radius: 6px;
+                    padding: 12px 16px; margin: 12px 0; }
+  .conflict { border-top: 1px dashed #d7b94e; padding: 10px 0; }
+  .conflict:first-of-type { border-top: none; }
+  .conflict label { display: block; margin: 4px 0 4px 14px; font-size: 13px; }
+  .conflict .base { color: #777; font-size: 12px; }
+  .cue-state { white-space: pre-wrap; }
+  .idx { color: #999; width: 34px; }
+  .actions { margin-top: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .muted { color: #888; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>字幕协校</h1>
+  <span class="tip">上传 SRT/VTT · 协作校对 · 版本历史 · 冲突人工裁决</span>
+</header>
+<main>
+  <section id="sec-projects">
+    <h2>项目列表</h2>
+    <form id="upload-form" class="row">
+      <input type="text" id="proj-name" placeholder="项目名称（可选，默认取文件名）" class="grow">
+      <input type="file" id="proj-file" accept=".srt,.vtt" required>
+      <button type="submit" class="primary">上传并创建项目</button>
+    </form>
+    <div id="upload-error" class="error"></div>
+    <table>
+      <thead><tr><th>ID</th><th>名称</th><th>格式</th><th>创建时间</th><th>当前版本</th><th></th></tr></thead>
+      <tbody id="project-rows"></tbody>
+    </table>
+  </section>
+
+  <section id="sec-editor" hidden>
+    <div class="row">
+      <button id="btn-back">← 返回列表</button>
+      <h2 id="ed-title" style="margin:0"></h2>
+      <span id="ed-version" class="badge"></span>
+      <span class="grow"></span>
+      <a class="btn" id="exp-head-srt">导出当前版 SRT</a>
+      <a class="btn" id="exp-head-vtt">导出当前版 VTT</a>
+    </div>
+    <div id="save-msg"></div>
+
+    <div id="conflict-panel" hidden>
+      <h3 style="margin-top:0">合并冲突：以下字幕条在你编辑期间也被修改或删除</h3>
+      <p class="muted">请逐条选择保留哪一方，系统不会自动覆盖。选择后将基于最新版本重新提交。</p>
+      <div id="conflict-list"></div>
+      <div class="actions">
+        <button id="btn-resolve" class="primary">应用选择并重新提交</button>
+        <button id="btn-conflict-cancel" class="danger">放弃本次修改</button>
+      </div>
+    </div>
+
+    <table>
+      <thead><tr><th>#</th><th>开始</th><th>结束</th><th>文本</th><th>操作</th></tr></thead>
+      <tbody id="cue-rows"></tbody>
+    </table>
+    <div class="actions">
+      <button id="btn-add">在末尾新增字幕条</button>
+      <span class="grow"></span>
+      <input type="text" id="save-note" placeholder="版本备注（可选）" style="width:220px">
+      <button id="btn-save" class="primary">保存为新版本</button>
+    </div>
+
+    <h3>历史版本</h3>
+    <table>
+      <thead><tr><th>版本</th><th>时间</th><th>备注</th><th>条数</th><th>操作</th></tr></thead>
+      <tbody id="version-rows"></tbody>
+    </table>
+
+    <div id="version-view" hidden>
+      <h3 id="vv-title"></h3>
+      <table>
+        <thead><tr><th>#</th><th>开始</th><th>结束</th><th>文本</th></tr></thead>
+        <tbody id="vv-rows"></tbody>
+      </table>
+      <div class="actions"><button id="vv-close">关闭</button></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let state = null;            // {projectId, name, baseVersionId, baseSeq, cues:[{uid,start_ms,end_ms,text}]}
+let pendingConflicts = null; // 冲突列表
+let pendingHead = null;      // 冲突发生时的头版本
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  const ct = res.headers.get('content-type') || '';
+  const data = ct.includes('json') ? await res.json() : await res.text();
+  return { status: res.status, data };
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, ch =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+function msToStr(ms) {
+  if (ms < 0) ms = 0;
+  const p = (n, w) => String(n).padStart(w, '0');
+  return `${p(Math.floor(ms/3600000),2)}:${p(Math.floor(ms%3600000/60000),2)}:` +
+         `${p(Math.floor(ms%60000/1000),2)},${p(ms%1000,3)}`;
+}
+function strToMs(str) {
+  const m = /^(\d+):([0-5]?\d):([0-5]?\d)[,.](\d{1,3})$/.exec(str.trim());
+  if (!m) return null;
+  return ((+m[1])*60 + (+m[2]))*60000 + (+m[3])*1000 + (+m[4].padEnd(3, '0'));
+}
+function fmtError(data) {
+  if (typeof data === 'string') return data;
+  let msg = data.error || '未知错误';
+  if (data.message) msg = data.message;
+  if (data.reasons && data.reasons.length) msg += '\n' + data.reasons.join('\n');
+  return msg;
+}
+function showMsg(text, isError) {
+  const el = $('#save-msg');
+  el.className = isError ? 'error' : 'ok';
+  el.textContent = text;
+}
+
+// ---------------- 项目列表 ----------------
+async function loadProjects() {
+  const { data } = await api('/api/projects');
+  const tb = $('#project-rows');
+  tb.innerHTML = '';
+  for (const p of data.projects) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${p.id}</td><td>${escapeHtml(p.name)}</td><td>${p.format}</td>` +
+      `<td>${p.created_at}</td><td>v${p.head_seq}</td><td></td>`;
+    const btn = document.createElement('button');
+    btn.textContent = '打开';
+    btn.onclick = () => openProject(p.id);
+    tr.lastChild.appendChild(btn);
+    tb.appendChild(tr);
+  }
+}
+
+$('#upload-form').onsubmit = async (ev) => {
+  ev.preventDefault();
+  const f = $('#proj-file').files[0];
+  if (!f) return;
+  const name = $('#proj-name').value.trim();
+  const buf = await f.arrayBuffer();
+  const { status, data } = await api(
+    `/api/projects?name=${encodeURIComponent(name)}&filename=${encodeURIComponent(f.name)}`,
+    { method: 'POST', body: buf });
+  if (status === 200) {
+    $('#upload-error').textContent = '';
+    $('#proj-file').value = ''; $('#proj-name').value = '';
+    loadProjects();
+  } else {
+    $('#upload-error').textContent = fmtError(data);
+  }
+};
+
+// ---------------- 编辑器 ----------------
+async function openProject(id) {
+  const { status, data } = await api(`/api/projects/${id}`);
+  if (status !== 200) { alert(fmtError(data)); return; }
+  state = {
+    projectId: id,
+    name: data.project.name,
+    baseVersionId: data.head.id,
+    baseSeq: data.head.seq,
+    cues: data.cues.map(c => ({ ...c })),
+  };
+  pendingConflicts = null;
+  $('#sec-projects').hidden = true;
+  $('#sec-editor').hidden = false;
+  $('#conflict-panel').hidden = true;
+  $('#version-view').hidden = true;
+  $('#save-msg').textContent = '';
+  $('#save-note').value = '';
+  renderEditor();
+  loadVersions();
+}
+
+function renderEditor() {
+  $('#ed-title').textContent = state.name;
+  $('#ed-version').textContent = `基于版本 v${state.baseSeq}`;
+  $('#exp-head-srt').href = `/api/versions/${state.baseVersionId}/export?fmt=srt`;
+  $('#exp-head-srt').setAttribute('download', '');
+  $('#exp-head-vtt').href = `/api/versions/${state.baseVersionId}/export?fmt=vtt`;
+  $('#exp-head-vtt').setAttribute('download', '');
+  const tb = $('#cue-rows');
+  tb.innerHTML = '';
+  state.cues.forEach(c => tb.appendChild(cueRow(c)));
+  renumber();
+}
+
+function cueRow(c) {
+  const tr = document.createElement('tr');
+  tr.dataset.uid = c.uid || '';
+  const tdIdx = document.createElement('td'); tdIdx.className = 'idx';
+  const tdS = document.createElement('td');
+  const tdE = document.createElement('td');
+  const tdT = document.createElement('td');
+  const tdOp = document.createElement('td');
+  const inS = document.createElement('input');
+  inS.className = 't-start mono'; inS.type = 'text'; inS.value = msToStr(c.start_ms);
+  const inE = document.createElement('input');
+  inE.className = 't-end mono'; inE.type = 'text'; inE.value = msToStr(c.end_ms);
+  const ta = document.createElement('textarea');
+  ta.className = 't-text'; ta.rows = 2; ta.value = c.text;
+  const btnIns = document.createElement('button');
+  btnIns.textContent = '下方插入';
+  btnIns.onclick = () => {
+    const nrow = cueRow({ uid: null, start_ms: c.end_ms, end_ms: c.end_ms + 1000, text: '' });
+    tr.after(nrow); renumber();
+  };
+  const btnDel = document.createElement('button');
+  btnDel.textContent = '删除'; btnDel.className = 'danger';
+  btnDel.onclick = () => { tr.remove(); renumber(); };
+  tdS.appendChild(inS); tdE.appendChild(inE); tdT.appendChild(ta);
+  tdOp.appendChild(btnIns); tdOp.appendChild(document.createTextNode(' ')); tdOp.appendChild(btnDel);
+  for (const td of [tdIdx, tdS, tdE, tdT, tdOp]) tr.appendChild(td);
+  return tr;
+}
+
+function renumber() {
+  document.querySelectorAll('#cue-rows tr').forEach((tr, i) => {
+    tr.querySelector('.idx').textContent = i + 1;
+  });
+}
+
+$('#btn-add').onclick = () => {
+  const last = state.cues[state.cues.length - 1];
+  const start = last ? last.end_ms : 0;
+  $('#cue-rows').appendChild(cueRow({ uid: null, start_ms: start, end_ms: start + 1000, text: '' }));
+  renumber();
+};
+
+$('#btn-back').onclick = () => {
+  state = null;
+  $('#sec-editor').hidden = true;
+  $('#sec-projects').hidden = false;
+  loadProjects();
+};
+
+// ---------------- 保存 / 合并 / 冲突 ----------------
+function readCuesFromDom() {
+  const rows = [...document.querySelectorAll('#cue-rows tr')];
+  const cues = [];
+  for (let i = 0; i < rows.length; i++) {
+    const tr = rows[i];
+    const s = strToMs(tr.querySelector('.t-start').value);
+    const e = strToMs(tr.querySelector('.t-end').value);
+    if (s === null || e === null) {
+      showMsg(`第 ${i + 1} 行时间格式不正确，应为 HH:MM:SS,mmm`, true);
+      return null;
+    }
+    cues.push({ uid: tr.dataset.uid || null, start_ms: s, end_ms: e,
+                text: tr.querySelector('.t-text').value });
+  }
+  return cues;
+}
+
+async function save() {
+  const cues = readCuesFromDom();
+  if (!cues) return;
+  state.cues = cues;  // 保持 state 与界面一致，冲突裁决以「我的」为准
+  const { status, data } = await api(`/api/projects/${state.projectId}/edits`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ base_version: state.baseVersionId,
+                           note: $('#save-note').value.trim(), cues }),
+  });
+  if (status === 200) {
+    const mergedInfo = data.merged_from ? `（已自动合并 v${data.merged_from.seq} 的他人修改）` : '';
+    $('#conflict-panel').hidden = true;
+    pendingConflicts = null;
+    await openProject(state.projectId);
+    showMsg(`已保存为版本 v${data.version.seq}${mergedInfo}`, false);
+  } else if (status === 409) {
+    pendingConflicts = data.conflicts;
+    pendingHead = data.head_version;
+    renderConflicts(data.conflicts);
+    showMsg(data.message || '存在合并冲突，请人工选择', true);
+  } else {
+    showMsg(fmtError(data), true);
+  }
+}
+$('#btn-save').onclick = save;
+
+function cueDesc(x) {
+  return x ? `${msToStr(x.start_ms)} → ${msToStr(x.end_ms)}　${x.text}` : '（已删除）';
+}
+
+function renderConflicts(conflicts) {
+  const list = $('#conflict-list');
+  list.innerHTML = '';
+  for (const c of conflicts) {
+    const div = document.createElement('div');
+    div.className = 'conflict';
+    div.innerHTML =
+      `<div class="base">基线状态：<span class="cue-state mono">${escapeHtml(cueDesc(c.base))}</span></div>` +
+      `<label><input type="radio" name="conf-${c.uid}" value="mine" checked> 保留我的修改：` +
+      `<span class="cue-state">${escapeHtml(cueDesc(c.ours))}</span></label>` +
+      `<label><input type="radio" name="conf-${c.uid}" value="theirs"> 采用他人版本：` +
+      `<span class="cue-state">${escapeHtml(cueDesc(c.theirs))}</span></label>`;
+    list.appendChild(div);
+  }
+  $('#conflict-panel').hidden = false;
+  $('#conflict-panel').scrollIntoView({ behavior: 'smooth' });
+}
+
+$('#btn-resolve').onclick = async () => {
+  for (const c of pendingConflicts) {
+    const sel = document.querySelector(`input[name="conf-${c.uid}"]:checked`);
+    if (!sel) { showMsg('请为每条冲突选择保留方案', true); return; }
+    if (sel.value === 'theirs') {
+      const idx = state.cues.findIndex(x => x.uid === c.uid);
+      if (c.theirs) {
+        if (idx >= 0) state.cues[idx] = { ...c.theirs };
+        else state.cues.push({ ...c.theirs });
+      } else if (idx >= 0) {
+        state.cues.splice(idx, 1);  // 他人已删除此条
+      }
+    }
+    // 选「我的」：工作区本来就是我的状态，无需改动
+  }
+  state.baseVersionId = pendingHead.id;
+  state.baseSeq = pendingHead.seq;
+  state.cues.sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms);
+  pendingConflicts = null;
+  $('#conflict-panel').hidden = true;
+  renderEditor();
+  await save();
+};
+
+$('#btn-conflict-cancel').onclick = async () => {
+  pendingConflicts = null;
+  await openProject(state.projectId);
+  showMsg('已放弃本次修改，工作区重置为最新版本', false);
+};
+
+// ---------------- 历史版本 ----------------
+async function loadVersions() {
+  const { data } = await api(`/api/projects/${state.projectId}/versions`);
+  const tb = $('#version-rows');
+  tb.innerHTML = '';
+  for (const v of data.versions) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>v${v.seq}</td><td>${v.created_at}</td>` +
+      `<td>${escapeHtml(v.note || '')}</td><td>${v.cue_count}</td><td></td>`;
+    const td = tr.lastChild;
+    const btnView = document.createElement('button');
+    btnView.textContent = '查看';
+    btnView.onclick = () => viewVersion(v.id, v.seq);
+    const aS = document.createElement('a');
+    aS.className = 'btn'; aS.textContent = '导出 SRT';
+    aS.href = `/api/versions/${v.id}/export?fmt=srt`; aS.setAttribute('download', '');
+    const aV = document.createElement('a');
+    aV.className = 'btn'; aV.textContent = '导出 VTT';
+    aV.href = `/api/versions/${v.id}/export?fmt=vtt`; aV.setAttribute('download', '');
+    td.append(btnView, ' ', aS, ' ', aV);
+    tb.appendChild(tr);
+  }
+}
+
+async function viewVersion(id, seq) {
+  const { status, data } = await api(`/api/versions/${id}`);
+  if (status !== 200) { alert(fmtError(data)); return; }
+  $('#vv-title').textContent = `版本 v${seq}（只读，共 ${data.cues.length} 条）`;
+  const tb = $('#vv-rows');
+  tb.innerHTML = '';
+  data.cues.forEach((c, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="idx">${i + 1}</td><td class="mono">${msToStr(c.start_ms)}</td>` +
+      `<td class="mono">${msToStr(c.end_ms)}</td><td class="pre">${escapeHtml(c.text)}</td>`;
+    tb.appendChild(tr);
+  });
+  $('#version-view').hidden = false;
+  $('#version-view').scrollIntoView({ behavior: 'smooth' });
+}
+$('#vv-close').onclick = () => { $('#version-view').hidden = true; };
+
+loadProjects();
+</script>
+</body>
+</html>
