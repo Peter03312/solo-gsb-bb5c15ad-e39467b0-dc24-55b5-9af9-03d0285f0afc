@@ -1,0 +1,14 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: 8000
+      DB_PATH: /data/subtitles.db
+    volumes:
+      - subtitle-data:/data
+    restart: unless-stopped
+
+volumes:
+  subtitle-data:
